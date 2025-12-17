@@ -1,16 +1,17 @@
 {
-  "name": "discord-points-bot",
+  "name": "discord-bot",
   "version": "1.0.0",
-  "description": "A Discord bot that tracks user points",
+  "description": "Discord bot with points system and marketplace",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "deploy": "node deploy-commands.js"
   },
-  "keywords": ["discord", "bot", "points"],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=16.9.0"
   }
 }
