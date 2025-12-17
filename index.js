@@ -12,6 +12,7 @@ const {
 } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
+const express = require('express');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
@@ -80,10 +81,114 @@ async function saveMarketplaceConfig(config) {
   }
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   console.log(`🤖 Bot is ready and serving ${client.guilds.cache.size} guild(s)`);
+  
+  // Auto-deploy commands on startup
+  await deployCommands();
 });
+
+// Function to deploy commands
+async function deployCommands() {
+  const { REST, Routes, ApplicationCommandOptionType } = require('discord.js');
+  
+  const commands = [
+    {
+      name: 'good',
+      description: 'Award +1 point to a user',
+      options: [
+        {
+          name: 'user',
+          type: ApplicationCommandOptionType.User,
+          description: 'The user to award points to',
+          required: true
+        }
+      ]
+    },
+    {
+      name: 'balance',
+      description: 'Check point balance for yourself or another user',
+      options: [
+        {
+          name: 'user',
+          type: ApplicationCommandOptionType.User,
+          description: 'The user to check (defaults to you)',
+          required: false
+        }
+      ]
+    },
+    {
+      name: 'reset',
+      description: 'Reset points for a user or all users (requires Manage Server)',
+      options: [
+        {
+          name: 'user',
+          type: ApplicationCommandOptionType.User,
+          description: 'The user to reset (leave empty to reset all users)',
+          required: false
+        }
+      ]
+    },
+    {
+      name: 'leaderboard',
+      description: 'View the top 10 users with the most points'
+    },
+    {
+      name: 'marketplace-setup',
+      description: 'Set up the marketplace system (requires Administrator)',
+      options: [
+        {
+          name: 'marketplace-channel',
+          type: ApplicationCommandOptionType.Channel,
+          description: 'The channel where approved listings will be posted',
+          required: true
+        },
+        {
+          name: 'submissions-channel',
+          type: ApplicationCommandOptionType.Channel,
+          description: 'The channel where submissions will be reviewed',
+          required: true
+        }
+      ]
+    },
+    {
+      name: 'marketplace-post',
+      description: 'Post the marketplace submission button (requires Administrator)',
+      options: [
+        {
+          name: 'channel',
+          type: ApplicationCommandOptionType.Channel,
+          description: 'The channel to post the button in (defaults to current channel)',
+          required: false
+        }
+      ]
+    }
+  ];
+
+  const token = process.env.DISCORD_TOKEN;
+  const clientId = process.env.DISCORD_CLIENT_ID;
+
+  if (!token || !clientId) {
+    console.error('⚠️ Cannot deploy commands: Missing DISCORD_TOKEN or DISCORD_CLIENT_ID');
+    return;
+  }
+
+  const rest = new REST({ version: '10' }).setToken(token);
+
+  try {
+    console.log('🔄 Deploying application commands...');
+
+    await rest.put(
+      Routes.applicationCommands(clientId),
+      { body: commands }
+    );
+
+    console.log('✅ Successfully deployed application commands!');
+  } catch (error) {
+    console.error('❌ Error deploying commands:', error);
+  }
+}
 
 client.on('interactionCreate', async interaction => {
   try {
@@ -675,6 +780,27 @@ async function handleMarketplaceDecline(interaction) {
     });
   }
 }
+
+// Create Express server for Render's port requirement
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    bot: client.user?.tag || 'Starting...',
+    guilds: client.guilds.cache.size,
+    uptime: process.uptime()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 Web server listening on port ${PORT}`);
+});
 
 // Login to Discord
 if (!process.env.DISCORD_TOKEN) {
