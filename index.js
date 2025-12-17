@@ -179,12 +179,16 @@ async function deployCommands() {
   try {
     console.log('🔄 Deploying application commands...');
 
-    await rest.put(
-      Routes.applicationCommands(clientId),
-      { body: commands }
-    );
+    // Deploy to all guilds the bot is in (instant registration)
+    for (const guild of client.guilds.cache.values()) {
+      await rest.put(
+        Routes.applicationGuildCommands(clientId, guild.id),
+        { body: commands }
+      );
+      console.log(`✅ Deployed commands to: ${guild.name}`);
+    }
 
-    console.log('✅ Successfully deployed application commands!');
+    console.log('✅ Successfully deployed all commands!');
   } catch (error) {
     console.error('❌ Error deploying commands:', error);
   }
