@@ -20,7 +20,6 @@ const {
   setMarketplaceConfig,
   getAllMarketplaceConfigs
 } = require('./database');
-const express = require('express');
 
 const client = new Client({
   intents: [
