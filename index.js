@@ -10,8 +10,16 @@ const {
   TextInputBuilder,
   TextInputStyle
 } = require('discord.js');
-const fs = require('fs').promises;
-const path = require('path');
+const express = require('express');
+const {
+  getPoints,
+  setPoints,
+  getAllPoints,
+  resetPoints,
+  getMarketplaceConfig,
+  setMarketplaceConfig,
+  getAllMarketplaceConfigs
+} = require('./database');
 const express = require('express');
 
 const client = new Client({
@@ -22,69 +30,6 @@ const client = new Client({
   ],
   partials: ['CHANNEL'] // Required for DMs
 });
-
-const POINTS_FILE = path.join(__dirname, 'points.json');
-const MARKETPLACE_CONFIG_FILE = path.join(__dirname, 'marketplace-config.json');
-
-// Load points from JSON file
-async function loadPoints() {
-  try {
-    const data = await fs.readFile(POINTS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return {};
-    }
-    throw error;
-  }
-}
-
-// Save points to JSON file atomically
-async function savePoints(points) {
-  const tempFile = `${POINTS_FILE}.tmp`;
-  try {
-    await fs.writeFile(tempFile, JSON.stringify(points, null, 2), 'utf8');
-    await fs.rename(tempFile, POINTS_FILE);
-  } catch (error) {
-    // Clean up temp file if something went wrong
-    try {
-      await fs.unlink(tempFile);
-    } catch {}
-    throw error;
-  }
-}
-
-// Get user's points
-function getPoints(points, userId) {
-  return points[userId] || 0;
-}
-
-// Load marketplace configuration
-async function loadMarketplaceConfig() {
-  try {
-    const data = await fs.readFile(MARKETPLACE_CONFIG_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return {};
-    }
-    throw error;
-  }
-}
-
-// Save marketplace configuration
-async function saveMarketplaceConfig(config) {
-  const tempFile = `${MARKETPLACE_CONFIG_FILE}.tmp`;
-  try {
-    await fs.writeFile(tempFile, JSON.stringify(config, null, 2), 'utf8');
-    await fs.rename(tempFile, MARKETPLACE_CONFIG_FILE);
-  } catch (error) {
-    try {
-      await fs.unlink(tempFile);
-    } catch {}
-    throw error;
-  }
-}
 
 client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
@@ -302,21 +247,19 @@ async function handleGoodCommand(interaction) {
   }
 
   // Load points, update, and save
-  const points = await loadPoints();
-  const currentPoints = getPoints(points, targetUser.id);
-  points[targetUser.id] = currentPoints + 1;
-  await savePoints(points);
+  const currentPoints = getPoints(targetUser.id);
+  const newPoints = currentPoints + 1;
+  setPoints(targetUser.id, newPoints);
 
   await interaction.reply({
-    content: `✅ Awarded +1 point to ${targetUser}! They now have **${points[targetUser.id]}** point(s).`
+    content: `✅ Awarded +1 point to ${targetUser}! They now have **${newPoints}** point(s).`
   });
 }
 
 async function handleBalanceCommand(interaction) {
   const targetUser = interaction.options.getUser('user') || interaction.user;
   
-  const points = await loadPoints();
-  const userPoints = getPoints(points, targetUser.id);
+  const userPoints = getPoints(targetUser.id);
 
   const isOwnBalance = targetUser.id === interaction.user.id;
   const message = isOwnBalance
@@ -336,21 +279,20 @@ async function handleResetCommand(interaction) {
   }
 
   const targetUser = interaction.options.getUser('user');
-  const points = await loadPoints();
 
   if (targetUser) {
     // Reset specific user
-    const hadPoints = points[targetUser.id] || 0;
-    points[targetUser.id] = 0;
-    await savePoints(points);
+    const hadPoints = getPoints(targetUser.id);
+    resetPoints(targetUser.id);
 
     await interaction.reply({
       content: `🔄 Reset ${targetUser}'s points to 0. (Previously: ${hadPoints})`
     });
   } else {
     // Reset all users
-    const userCount = Object.keys(points).length;
-    await savePoints({});
+    const allPoints = getAllPoints();
+    const userCount = allPoints.length;
+    resetPoints();
 
     await interaction.reply({
       content: `🔄 Reset all points! Cleared data for ${userCount} user(s).`
@@ -359,12 +301,10 @@ async function handleResetCommand(interaction) {
 }
 
 async function handleLeaderboardCommand(interaction) {
-  const points = await loadPoints();
+  const allPoints = getAllPoints();
   
-  // Sort users by points (descending) and take top 10
-  const sortedUsers = Object.entries(points)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 10);
+  // Take top 10
+  const sortedUsers = allPoints.slice(0, 10);
 
   if (sortedUsers.length === 0) {
     return interaction.reply({
@@ -383,7 +323,7 @@ async function handleLeaderboardCommand(interaction) {
 
   // Add fields for each user
   for (let i = 0; i < sortedUsers.length; i++) {
-    const [userId, userPoints] = sortedUsers[i];
+    const { user_id: userId, points: userPoints } = sortedUsers[i];
     
     try {
       const user = await client.users.fetch(userId);
@@ -435,15 +375,16 @@ async function handleMarketplaceSetup(interaction) {
   }
 
   // Save configuration
-  const config = await loadMarketplaceConfig();
-  config[interaction.guildId] = {
-    marketplaceChannelId: marketplaceChannel.id,
-    submissionsChannelId: submissionsChannel.id
-  };
-  await saveMarketplaceConfig(config);
+  console.log('💾 Saving marketplace config for guild:', interaction.guildId);
+  console.log('Marketplace Channel:', marketplaceChannel.id);
+  console.log('Submissions Channel:', submissionsChannel.id);
+  
+  setMarketplaceConfig(interaction.guildId, marketplaceChannel.id, submissionsChannel.id);
+  
+  console.log('✅ Config saved successfully to database');
 
   await interaction.reply({
-    content: `✅ Marketplace system configured!\n📢 **Marketplace Channel:** ${marketplaceChannel}\n📋 **Submissions Channel:** ${submissionsChannel}\n\nUse \`/marketplace-post\` to post the submission button.`,
+    content: `✅ Marketplace system configured!\n📢 **Marketplace Channel:** ${marketplaceChannel}\n📋 **Submissions Channel:** ${submissionsChannel}\n\n**Debug Info:**\n- Guild ID: \`${interaction.guildId}\`\n- Config saved to persistent database\n\nUse \`/marketplace-post\` to post the submission button.`,
     ephemeral: true
   });
 }
@@ -458,8 +399,8 @@ async function handleMarketplacePost(interaction) {
   }
 
   // Check if marketplace is configured
-  const config = await loadMarketplaceConfig();
-  if (!config[interaction.guildId]) {
+  const config = getMarketplaceConfig(interaction.guildId);
+  if (!config) {
     return interaction.reply({
       content: '❌ Marketplace system is not configured! Use `/marketplace-setup` first.',
       ephemeral: true
@@ -495,6 +436,20 @@ async function handleMarketplacePost(interaction) {
 }
 
 async function handleMarketplaceSubmitButton(interaction) {
+  // Check if marketplace is configured
+  const guildConfig = getMarketplaceConfig(interaction.guildId);
+
+  console.log('📋 Marketplace Submit Button Clicked');
+  console.log('Guild ID:', interaction.guildId);
+  console.log('Config exists:', !!guildConfig);
+
+  if (!guildConfig) {
+    return interaction.reply({
+      content: '❌ Marketplace system is not configured! An administrator needs to run `/marketplace-setup` first.\n\n**Debug Info:**\n- Guild ID: `' + interaction.guildId + '`',
+      ephemeral: true
+    });
+  }
+
   // Create the modal form
   const modal = new ModalBuilder()
     .setCustomId('marketplace_modal')
@@ -560,8 +515,7 @@ async function handleMarketplaceSubmitButton(interaction) {
 async function handleMarketplaceModalSubmit(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const config = await loadMarketplaceConfig();
-  const guildConfig = config[interaction.guildId];
+  const guildConfig = getMarketplaceConfig(interaction.guildId);
 
   if (!guildConfig) {
     return interaction.editReply({
@@ -628,7 +582,7 @@ async function handleMarketplaceModalSubmit(interaction) {
 
   // Send to submissions channel
   try {
-    const submissionsChannel = await client.channels.fetch(guildConfig.submissionsChannelId);
+    const submissionsChannel = await client.channels.fetch(guildConfig.submissions_channel_id);
     const submissionMessage = await submissionsChannel.send({
       embeds: [submissionEmbed],
       components: [buttons]
@@ -679,8 +633,7 @@ async function handleMarketplaceApprove(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  const config = await loadMarketplaceConfig();
-  const guildConfig = config[interaction.guildId];
+  const guildConfig = getMarketplaceConfig(interaction.guildId);
 
   if (!guildConfig) {
     return interaction.editReply({
@@ -719,7 +672,7 @@ async function handleMarketplaceApprove(interaction) {
     }
 
     // Post to marketplace channel with mention
-    const marketplaceChannel = await client.channels.fetch(guildConfig.marketplaceChannelId);
+    const marketplaceChannel = await client.channels.fetch(guildConfig.marketplace_channel_id);
     await marketplaceChannel.send({ 
       content: `New listing from <@${submissionData.userId}>!`,
       embeds: [listingEmbed] 
@@ -894,12 +847,12 @@ client.on('messageCreate', async message => {
     await message.reply({ embeds: [confirmEmbed] });
 
     // Find the submission message and update it
-    const config = await loadMarketplaceConfig();
+    const allConfigs = getAllMarketplaceConfigs();
     
-    for (const [guildId, guildConfig] of Object.entries(config)) {
+    for (const config of allConfigs) {
       try {
-        const guild = await client.guilds.fetch(guildId);
-        const submissionsChannel = await guild.channels.fetch(guildConfig.submissionsChannelId);
+        const guild = await client.guilds.fetch(config.guild_id);
+        const submissionsChannel = await guild.channels.fetch(config.submissions_channel_id);
         const submissionMessage = await submissionsChannel.messages.fetch(request.submissionMessageId);
 
         // Update the submission message with the images
@@ -936,7 +889,7 @@ ${JSON.stringify(submissionData, null, 2)}
 
         break; // Found and updated, exit loop
       } catch (e) {
-        console.log('Could not update submission in guild:', guildId, e.message);
+        console.log('Could not update submission in guild:', config.guild_id, e.message);
       }
     }
 
