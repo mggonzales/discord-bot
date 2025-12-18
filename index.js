@@ -178,17 +178,26 @@ async function deployCommands() {
 
   try {
     console.log('🔄 Deploying application commands...');
+    console.log(`📊 Bot is in ${client.guilds.cache.size} guild(s)`);
 
     // Deploy to all guilds the bot is in (instant registration)
     for (const guild of client.guilds.cache.values()) {
-      await rest.put(
-        Routes.applicationGuildCommands(clientId, guild.id),
-        { body: commands }
-      );
-      console.log(`✅ Deployed commands to: ${guild.name}`);
+      try {
+        await rest.put(
+          Routes.applicationGuildCommands(clientId, guild.id),
+          { body: commands }
+        );
+        console.log(`✅ Deployed commands to: ${guild.name} (ID: ${guild.id})`);
+      } catch (guildError) {
+        console.error(`❌ Failed to deploy to ${guild.name}:`, guildError.message);
+        if (guildError.code === 50001) {
+          console.error(`   → Bot is missing "applications.commands" scope in ${guild.name}`);
+          console.error(`   → Please re-invite the bot with the correct permissions`);
+        }
+      }
     }
 
-    console.log('✅ Successfully deployed all commands!');
+    console.log('✅ Command deployment process complete!');
   } catch (error) {
     console.error('❌ Error deploying commands:', error);
   }
@@ -220,6 +229,8 @@ client.on('interactionCreate', async interaction => {
         await handleMarketplaceSubmitButton(interaction);
       } else if (interaction.customId.startsWith('marketplace_approve_')) {
         await handleMarketplaceApprove(interaction);
+      } else if (interaction.customId.startsWith('marketplace_request_images_')) {
+        await handleMarketplaceRequestImages(interaction);
       } else if (interaction.customId.startsWith('marketplace_decline_')) {
         await handleMarketplaceDecline(interaction);
       }
@@ -228,6 +239,8 @@ client.on('interactionCreate', async interaction => {
     else if (interaction.isModalSubmit()) {
       if (interaction.customId === 'marketplace_modal') {
         await handleMarketplaceModalSubmit(interaction);
+      } else if (interaction.customId === 'decline_reason_modal') {
+        await handleDeclineReasonSubmit(interaction);
       }
     }
   } catch (error) {
@@ -597,6 +610,11 @@ async function handleMarketplaceModalSubmit(interaction) {
         .setStyle(ButtonStyle.Success)
         .setEmoji('✅'),
       new ButtonBuilder()
+        .setCustomId(`marketplace_request_images_${submissionId}`)
+        .setLabel('Request Images')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📸'),
+      new ButtonBuilder()
         .setCustomId(`marketplace_decline_${submissionId}`)
         .setLabel('Decline')
         .setStyle(ButtonStyle.Danger)
@@ -680,12 +698,13 @@ async function handleMarketplaceApprove(interaction) {
 
     // Create marketplace listing embed
     const listingEmbed = new EmbedBuilder()
-      .setColor('#00FF00')
+      .setColor('#233dff')
       .setTitle(submissionData.title)
       .setDescription(submissionData.description)
       .addFields(
         { name: '💰 Price', value: submissionData.price, inline: true },
-        { name: '📞 Contact', value: submissionData.contact, inline: true }
+        { name: '📞 Contact', value: submissionData.contact, inline: true },
+        { name: '👤 Seller', value: `<@${submissionData.userId}>`, inline: true }
       )
       .setFooter({ text: `Listed by ${submissionData.username}` })
       .setTimestamp();
@@ -694,9 +713,12 @@ async function handleMarketplaceApprove(interaction) {
       listingEmbed.setImage(submissionData.imageUrl);
     }
 
-    // Post to marketplace channel
+    // Post to marketplace channel with mention
     const marketplaceChannel = await client.channels.fetch(guildConfig.marketplaceChannelId);
-    await marketplaceChannel.send({ embeds: [listingEmbed] });
+    await marketplaceChannel.send({ 
+      content: `New listing from <@${submissionData.userId}>!`,
+      embeds: [listingEmbed] 
+    });
 
     // Update the submission message
     const updatedEmbed = EmbedBuilder.from(message.embeds[0])
@@ -729,12 +751,12 @@ async function handleMarketplaceApprove(interaction) {
   }
 }
 
-async function handleMarketplaceDecline(interaction) {
+async function handleMarketplaceRequestImages(interaction) {
   // Check for Administrator or Manage Server permission
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && 
       !interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
     return interaction.reply({
-      content: '❌ You need **Administrator** or **Manage Server** permission to decline submissions!',
+      content: '❌ You need **Administrator** or **Manage Server** permission to request images!',
       ephemeral: true
     });
   }
@@ -754,31 +776,276 @@ async function handleMarketplaceDecline(interaction) {
 
     const submissionData = JSON.parse(dataMatch[1]);
 
-    // Update the submission message
-    const updatedEmbed = EmbedBuilder.from(message.embeds[0])
-      .setColor('#FF0000')
-      .setTitle('❌ Declined - Marketplace Submission');
+    // Send DM to the submitter
+    try {
+      const submitter = await client.users.fetch(submissionData.userId);
+      
+      const requestEmbed = new EmbedBuilder()
+        .setColor('#FFA500')
+        .setTitle('📸 Image Request for Your Marketplace Listing')
+        .setDescription(`The moderators would like to request images for your listing **"${submissionData.title}"**.`)
+        .addFields(
+          { name: '📝 What to do', value: 'Please reply to this DM with image(s) of your product/service. You can attach multiple images in a single message.' },
+          { name: '⏰ Timeframe', value: 'Please send the images within 24 hours.' },
+          { name: '💡 Tip', value: 'Make sure the images are clear and relevant to your listing!' }
+        )
+        .setFooter({ text: 'Simply attach your images in your next message here' })
+        .setTimestamp();
 
-    await message.edit({
+      await submitter.send({ embeds: [requestEmbed] });
+
+      // Update submission embed to show request was sent
+      const updatedEmbed = EmbedBuilder.from(message.embeds[0])
+        .addFields({ 
+          name: '📸 Image Request', 
+          value: `Sent by ${interaction.user} at <t:${Math.floor(Date.now() / 1000)}:f>`, 
+          inline: false 
+        });
+
+      await message.edit({ embeds: [updatedEmbed] });
+
+      // Set up DM listener for this specific user
+      setupImageListener(submissionData.userId, message.id, submissionData.title);
+
+      await interaction.editReply({
+        content: `✅ Image request sent to <@${submissionData.userId}>! The bot will monitor their DMs for the next 24 hours.\n\nWhen they send images, you'll be notified here.`
+      });
+    } catch (e) {
+      console.log('Could not DM user:', e.message);
+      await interaction.editReply({
+        content: '❌ Could not send DM to user. They may have DMs disabled or have blocked the bot.'
+      });
+    }
+  } catch (error) {
+    console.error('Error requesting images:', error);
+    await interaction.editReply({
+      content: '❌ Failed to request images. Please try again.'
+    });
+  }
+}
+
+// Store active image request listeners
+const imageRequestListeners = new Map();
+
+function setupImageListener(userId, submissionMessageId, listingTitle) {
+  // Store the listener with expiration time (24 hours)
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  
+  imageRequestListeners.set(userId, {
+    submissionMessageId,
+    listingTitle,
+    expiresAt
+  });
+
+  // Clean up after 24 hours
+  setTimeout(() => {
+    imageRequestListeners.delete(userId);
+  }, 24 * 60 * 60 * 1000);
+}
+
+// Add message handler for DMs with images
+client.on('messageCreate', async message => {
+  // Ignore bot messages
+  if (message.author.bot) return;
+
+  // Only handle DMs
+  if (message.channel.type !== 1) return; // 1 = DM channel
+
+  // Check if this user has an active image request
+  const request = imageRequestListeners.get(message.author.id);
+  if (!request) return;
+
+  // Check if request hasn't expired
+  if (Date.now() > request.expiresAt) {
+    imageRequestListeners.delete(message.author.id);
+    return;
+  }
+
+  // Check if message has attachments (images)
+  const images = message.attachments.filter(att => 
+    att.contentType?.startsWith('image/')
+  );
+
+  if (images.size === 0) {
+    // No images in this message, keep waiting
+    return;
+  }
+
+  // User sent images! Process them
+  try {
+    const imageUrls = images.map(img => img.url);
+
+    // Send confirmation to user
+    const confirmEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Images Received!')
+      .setDescription(`Thank you! We've received ${images.size} image(s) for your listing **"${request.listingTitle}"**.`)
+      .addFields({ 
+        name: '📝 Next Steps', 
+        value: 'The moderators will review your images and update your listing accordingly.' 
+      })
+      .setTimestamp();
+
+    await message.reply({ embeds: [confirmEmbed] });
+
+    // Find the submission message and update it
+    const config = await loadMarketplaceConfig();
+    
+    for (const [guildId, guildConfig] of Object.entries(config)) {
+      try {
+        const guild = await client.guilds.fetch(guildId);
+        const submissionsChannel = await guild.channels.fetch(guildConfig.submissionsChannelId);
+        const submissionMessage = await submissionsChannel.messages.fetch(request.submissionMessageId);
+
+        // Update the submission message with the images
+        const updatedEmbed = EmbedBuilder.from(submissionMessage.embeds[0])
+          .setImage(imageUrls[0]) // Set the first image as main image
+          .addFields({ 
+            name: '📸 Images Received', 
+            value: `User submitted ${images.size} image(s) at <t:${Math.floor(Date.now() / 1000)}:f>\n${imageUrls.map((url, i) => `[Image ${i + 1}](${url})`).join(' • ')}`, 
+            inline: false 
+          });
+
+        await submissionMessage.edit({ embeds: [updatedEmbed] });
+
+        // Update the stored JSON data to include images
+        const dataMatch = submissionMessage.content.match(/```json\n([\s\S]+?)\n```/);
+        if (dataMatch) {
+          const submissionData = JSON.parse(dataMatch[1]);
+          submissionData.imageUrl = imageUrls[0]; // Primary image
+          submissionData.additionalImages = imageUrls; // All images
+
+          await submissionMessage.edit({
+            content: `\`\`\`json
+${JSON.stringify(submissionData, null, 2)}
+\`\`\``,
+            embeds: [updatedEmbed],
+            components: submissionMessage.components
+          });
+        }
+
+        // Notify moderators in the submissions channel
+        await submissionsChannel.send({
+          content: `📸 <@${message.author.id}> has submitted images for their marketplace listing! Check the updated submission above.`
+        });
+
+        break; // Found and updated, exit loop
+      } catch (e) {
+        console.log('Could not update submission in guild:', guildId, e.message);
+      }
+    }
+
+    // Clean up listener
+    imageRequestListeners.delete(message.author.id);
+
+  } catch (error) {
+    console.error('Error processing submitted images:', error);
+    await message.reply({
+      content: '❌ There was an error processing your images. Please contact a moderator.'
+    });
+  }
+});
+
+async function handleMarketplaceDecline(interaction) {
+  // Check for Administrator or Manage Server permission
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) && 
+      !interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+    return interaction.reply({
+      content: '❌ You need **Administrator** or **Manage Server** permission to decline submissions!',
+      ephemeral: true
+    });
+  }
+
+  // Show modal to get decline reason
+  const modal = new ModalBuilder()
+    .setCustomId(`decline_reason_modal`)
+    .setTitle('Decline Submission');
+
+  const reasonInput = new TextInputBuilder()
+    .setCustomId('decline_reason')
+    .setLabel('Reason for Decline (sent to user)')
+    .setPlaceholder('e.g., Does not meet marketplace guidelines, Inappropriate content, etc.')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(500);
+
+  const row = new ActionRowBuilder().addComponents(reasonInput);
+  modal.addComponents(row);
+
+  await interaction.showModal(modal);
+}
+
+async function handleDeclineReasonSubmit(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    // Get the decline reason
+    const reason = interaction.fields.getTextInputValue('decline_reason');
+
+    // The message should be accessible from interaction.message
+    // But since modal submissions don't have direct access, we need to find it
+    // We'll search recent messages in the channel
+    const messages = await interaction.channel.messages.fetch({ limit: 50 });
+    let submissionMessage = null;
+    
+    // Find the most recent message with marketplace submission buttons
+    for (const msg of messages.values()) {
+      if (msg.embeds.length > 0 && 
+          msg.embeds[0].title === '📝 New Marketplace Submission' &&
+          msg.components.length > 0) {
+        submissionMessage = msg;
+        break;
+      }
+    }
+
+    if (!submissionMessage) {
+      return interaction.editReply({
+        content: '❌ Could not find the submission message. Please try declining again or contact an administrator.'
+      });
+    }
+
+    // Extract submission data
+    const dataMatch = submissionMessage.content.match(/```json\n([\s\S]+?)\n```/);
+    
+    if (!dataMatch) {
+      return interaction.editReply({
+        content: '❌ Could not retrieve submission data!'
+      });
+    }
+
+    const submissionData = JSON.parse(dataMatch[1]);
+
+    // Update the submission message
+    const updatedEmbed = EmbedBuilder.from(submissionMessage.embeds[0])
+      .setColor('#FF0000')
+      .setTitle('❌ Declined - Marketplace Submission')
+      .addFields({ name: '📝 Decline Reason', value: reason, inline: false });
+
+    await submissionMessage.edit({
       embeds: [updatedEmbed],
       components: [] // Remove buttons
     });
 
-    // Notify the submitter
+    // Notify the submitter with reason
     try {
       const submitter = await client.users.fetch(submissionData.userId);
-      await submitter.send({
-        content: `❌ Your marketplace submission **"${submissionData.title}"** has been declined.`
-      });
+      const declineEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('❌ Marketplace Submission Declined')
+        .setDescription(`Your submission **"${submissionData.title}"** has been declined.`)
+        .addFields({ name: '📝 Reason', value: reason })
+        .setTimestamp();
+
+      await submitter.send({ embeds: [declineEmbed] });
     } catch (e) {
-      console.log('Could not DM user about decline');
+      console.log('Could not DM user about decline:', e.message);
     }
 
     await interaction.editReply({
-      content: '✅ Submission declined.'
+      content: `✅ Submission declined. Reason sent to <@${submissionData.userId}>.`
     });
   } catch (error) {
-    console.error('Error declining submission:', error);
+    console.error('Error processing decline reason:', error);
     await interaction.editReply({
       content: '❌ Failed to decline submission. Please try again.'
     });
