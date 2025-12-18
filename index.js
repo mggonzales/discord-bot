@@ -15,7 +15,12 @@ const path = require('path');
 const express = require('express');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent
+  ],
+  partials: ['CHANNEL'] // Required for DMs
 });
 
 const POINTS_FILE = path.join(__dirname, 'points.json');
