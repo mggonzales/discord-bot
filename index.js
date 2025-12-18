@@ -600,11 +600,13 @@ async function handleMarketplaceModalSubmit(interaction) {
       userTag: interaction.user.tag
     };
 
-    // Edit message to include data in a way we can retrieve it
+    // Store data as hidden field in embed (retrieve later via embed fields)
+    submissionEmbed.setFooter({ 
+      text: `User ID: ${interaction.user.id} | Data: ${Buffer.from(JSON.stringify(submissionData)).toString('base64')}`
+    });
+
+    // Edit message - clean display without JSON code block
     await submissionMessage.edit({
-      content: `\`\`\`json
-${JSON.stringify(submissionData, null, 2)}
-\`\`\``,
       embeds: [submissionEmbed],
       components: [buttons]
     });
@@ -641,17 +643,18 @@ async function handleMarketplaceApprove(interaction) {
   }
 
   try {
-    // Extract submission data from message
+    // Extract submission data from embed footer
     const message = interaction.message;
-    const dataMatch = message.content.match(/```json\n([\s\S]+?)\n```/);
+    const footer = message.embeds[0]?.footer?.text;
     
-    if (!dataMatch) {
+    if (!footer || !footer.includes('Data:')) {
       return interaction.editReply({
         content: '❌ Could not retrieve submission data!'
       });
     }
 
-    const submissionData = JSON.parse(dataMatch[1]);
+    const base64Data = footer.split('Data: ')[1];
+    const submissionData = JSON.parse(Buffer.from(base64Data, 'base64').toString('utf8'));
 
     // Create marketplace listing embed
     const listingEmbed = new EmbedBuilder()
@@ -721,17 +724,18 @@ async function handleMarketplaceRequestImages(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    // Extract submission data from message
+    // Extract submission data from embed footer
     const message = interaction.message;
-    const dataMatch = message.content.match(/```json\n([\s\S]+?)\n```/);
+    const footer = message.embeds[0]?.footer?.text;
     
-    if (!dataMatch) {
+    if (!footer || !footer.includes('Data:')) {
       return interaction.editReply({
         content: '❌ Could not retrieve submission data!'
       });
     }
 
-    const submissionData = JSON.parse(dataMatch[1]);
+    const base64Data = footer.split('Data: ')[1];
+    const submissionData = JSON.parse(Buffer.from(base64Data, 'base64').toString('utf8'));
 
     // Send DM to the submitter
     try {
@@ -865,17 +869,20 @@ client.on('messageCreate', async message => {
 
         await submissionMessage.edit({ embeds: [updatedEmbed] });
 
-        // Update the stored JSON data to include images
-        const dataMatch = submissionMessage.content.match(/```json\n([\s\S]+?)\n```/);
-        if (dataMatch) {
-          const submissionData = JSON.parse(dataMatch[1]);
+        // Update the stored data to include images
+        const footer = submissionMessage.embeds[0]?.footer?.text;
+        if (footer && footer.includes('Data:')) {
+          const base64Data = footer.split('Data: ')[1];
+          const submissionData = JSON.parse(Buffer.from(base64Data, 'base64').toString('utf8'));
           submissionData.imageUrl = imageUrls[0]; // Primary image
           submissionData.additionalImages = imageUrls; // All images
 
+          // Update footer with new data
+          updatedEmbed.setFooter({ 
+            text: `User ID: ${submissionData.userId} | Data: ${Buffer.from(JSON.stringify(submissionData)).toString('base64')}`
+          });
+
           await submissionMessage.edit({
-            content: `\`\`\`json
-${JSON.stringify(submissionData, null, 2)}
-\`\`\``,
             embeds: [updatedEmbed],
             components: submissionMessage.components
           });
@@ -961,16 +968,17 @@ async function handleDeclineReasonSubmit(interaction) {
       });
     }
 
-    // Extract submission data
-    const dataMatch = submissionMessage.content.match(/```json\n([\s\S]+?)\n```/);
+    // Extract submission data from footer
+    const footer = submissionMessage.embeds[0]?.footer?.text;
     
-    if (!dataMatch) {
+    if (!footer || !footer.includes('Data:')) {
       return interaction.editReply({
         content: '❌ Could not retrieve submission data!'
       });
     }
 
-    const submissionData = JSON.parse(dataMatch[1]);
+    const base64Data = footer.split('Data: ')[1];
+    const submissionData = JSON.parse(Buffer.from(base64Data, 'base64').toString('utf8'));
 
     // Update the submission message
     const updatedEmbed = EmbedBuilder.from(submissionMessage.embeds[0])
