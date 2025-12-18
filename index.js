@@ -754,57 +754,6 @@ async function handleMarketplaceModalSubmit(interaction) {
     });
   }
 }
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji('📸'),
-      new ButtonBuilder()
-        .setCustomId(`marketplace_decline_${submissionId}`)
-        .setLabel('Decline')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('❌')
-    );
-
-  // Send to submissions channel
-  try {
-    const submissionsChannel = await client.channels.fetch(guildConfig.submissions_channel_id);
-    const submissionMessage = await submissionsChannel.send({
-      embeds: [submissionEmbed],
-      components: [buttons]
-    });
-
-    // Store submission data as JSON in the message content (hidden via embed)
-    const submissionData = {
-      messageId: submissionMessage.id,
-      title,
-      description,
-      price,
-      contact,
-      imageUrl: validImageUrl,
-      userId: interaction.user.id,
-      username: interaction.user.username,
-      userTag: interaction.user.tag
-    };
-
-    // Store data as hidden field in embed (retrieve later via embed fields)
-    submissionEmbed.setFooter({ 
-      text: `User ID: ${interaction.user.id} | Data: ${Buffer.from(JSON.stringify(submissionData)).toString('base64')}`
-    });
-
-    // Edit message - clean display without JSON code block
-    await submissionMessage.edit({
-      embeds: [submissionEmbed],
-      components: [buttons]
-    });
-
-    await interaction.editReply({
-      content: '✅ Your submission has been sent for review! You will be notified once it is processed.'
-    });
-  } catch (error) {
-    console.error('Error sending submission:', error);
-    await interaction.editReply({
-      content: '❌ Failed to submit your listing. Please contact an administrator.'
-    });
-  }
-}
 
 async function handleMarketplaceApprove(interaction) {
   // Check for Administrator or Manage Server permission
