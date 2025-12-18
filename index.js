@@ -8,7 +8,8 @@ const {
   ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  StringSelectMenuBuilder
 } = require('discord.js');
 const express = require('express');
 const {
@@ -176,12 +177,22 @@ client.on('interactionCreate', async interaction => {
     else if (interaction.isButton()) {
       if (interaction.customId === 'marketplace_submit') {
         await handleMarketplaceSubmitButton(interaction);
+      } else if (interaction.customId === 'marketplace_continue') {
+        await handleMarketplaceContinue(interaction);
       } else if (interaction.customId.startsWith('marketplace_approve_')) {
         await handleMarketplaceApprove(interaction);
       } else if (interaction.customId.startsWith('marketplace_request_images_')) {
         await handleMarketplaceRequestImages(interaction);
       } else if (interaction.customId.startsWith('marketplace_decline_')) {
         await handleMarketplaceDecline(interaction);
+      }
+    }
+    // Handle select menu interactions
+    else if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'marketplace_category' ||
+          interaction.customId === 'marketplace_type' ||
+          interaction.customId === 'marketplace_condition') {
+        await handleMarketplaceSelectMenu(interaction);
       }
     }
     // Handle modal submissions
@@ -353,6 +364,112 @@ async function handleLeaderboardCommand(interaction) {
 
 // ==================== MARKETPLACE COMMANDS ====================
 
+async function handleMarketplaceSelectMenu(interaction) {
+  const userId = interaction.user.id;
+  
+  // Get or create user's form data
+  if (!marketplaceFormData.has(userId)) {
+    marketplaceFormData.set(userId, {});
+  }
+  
+  const formData = marketplaceFormData.get(userId);
+  
+  // Store the selection
+  if (interaction.customId === 'marketplace_category') {
+    formData.category = interaction.values[0];
+  } else if (interaction.customId === 'marketplace_type') {
+    formData.type = interaction.values[0];
+  } else if (interaction.customId === 'marketplace_condition') {
+    formData.condition = interaction.values[0];
+  }
+  
+  // Update the message to show selections
+  const categoryLabel = formData.category ? `✅ Category: ${formatValue(formData.category)}` : '❌ Category: Not selected';
+  const typeLabel = formData.type ? `✅ Type: ${formatValue(formData.type)}` : '❌ Type: Not selected';
+  const conditionLabel = formData.condition ? `✅ Condition: ${formatValue(formData.condition)}` : '❌ Condition: Not selected';
+  
+  await interaction.update({
+    content: `**Step 1 of 2:** Please select the details for your listing:\n\n${categoryLabel}\n${typeLabel}\n${conditionLabel}\n\n*Select all three options, then click Continue.*`
+  });
+}
+
+function formatValue(value) {
+  return value.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+async function handleMarketplaceContinue(interaction) {
+  const userId = interaction.user.id;
+  const formData = marketplaceFormData.get(userId);
+  
+  // Validate that all selections are made
+  if (!formData || !formData.category || !formData.type || !formData.condition) {
+    return interaction.reply({
+      content: '❌ Please select all three options (Category, Type, Condition) before continuing!',
+      ephemeral: true
+    });
+  }
+  
+  // Show the modal with text inputs
+  const modal = new ModalBuilder()
+    .setCustomId('marketplace_modal')
+    .setTitle('Marketplace Submission');
+
+  // Title input
+  const titleInput = new TextInputBuilder()
+    .setCustomId('listing_title')
+    .setLabel('Title')
+    .setPlaceholder('e.g., Gaming PC For Sale, Web Design Services')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100);
+
+  // Description input
+  const descriptionInput = new TextInputBuilder()
+    .setCustomId('listing_description')
+    .setLabel('Description')
+    .setPlaceholder('Provide detailed information about your listing...')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(1000);
+
+  // Price input
+  const priceInput = new TextInputBuilder()
+    .setCustomId('listing_price')
+    .setLabel('Price')
+    .setPlaceholder('e.g., $500, Free, Negotiable, 100 points')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(50);
+
+  // Contact + Social Media combined input
+  const contactInput = new TextInputBuilder()
+    .setCustomId('listing_contact')
+    .setLabel('Contact & Social Media')
+    .setPlaceholder('DM me, email@example.com, @username, https://instagram.com/...')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(500);
+
+  // Image URLs input (supports multiple)
+  const imageInput = new TextInputBuilder()
+    .setCustomId('listing_images')
+    .setLabel('Image URLs (Optional, one per line)')
+    .setPlaceholder('https://example.com/img1.png\nhttps://example.com/img2.png')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(false)
+    .setMaxLength(1000);
+
+  const firstRow = new ActionRowBuilder().addComponents(titleInput);
+  const secondRow = new ActionRowBuilder().addComponents(descriptionInput);
+  const thirdRow = new ActionRowBuilder().addComponents(priceInput);
+  const fourthRow = new ActionRowBuilder().addComponents(contactInput);
+  const fifthRow = new ActionRowBuilder().addComponents(imageInput);
+
+  modal.addComponents(firstRow, secondRow, thirdRow, fourthRow, fifthRow);
+
+  await interaction.showModal(modal);
+}
+
 async function handleMarketplaceSetup(interaction) {
   // Check for Administrator permission
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -449,66 +566,60 @@ async function handleMarketplaceSubmitButton(interaction) {
     });
   }
 
-  // Create the modal form
-  const modal = new ModalBuilder()
-    .setCustomId('marketplace_modal')
-    .setTitle('Marketplace Submission');
+  // Step 1: Show category selection with dropdowns
+  const categoryMenu = new StringSelectMenuBuilder()
+    .setCustomId('marketplace_category')
+    .setPlaceholder('Select a category')
+    .addOptions([
+      { label: 'Electronics & Tech', value: 'electronics', emoji: '💻' },
+      { label: 'Gaming', value: 'gaming', emoji: '🎮' },
+      { label: 'Fashion & Apparel', value: 'fashion', emoji: '👕' },
+      { label: 'Books & Media', value: 'books', emoji: '📚' },
+      { label: 'Home & Garden', value: 'home', emoji: '🏠' },
+      { label: 'Sports & Outdoors', value: 'sports', emoji: '⚽' },
+      { label: 'Art & Collectibles', value: 'art', emoji: '🎨' },
+      { label: 'Services', value: 'services', emoji: '🛠️' },
+      { label: 'Digital Products', value: 'digital', emoji: '📱' },
+      { label: 'Other', value: 'other', emoji: '📦' }
+    ]);
 
-  // Title input
-  const titleInput = new TextInputBuilder()
-    .setCustomId('listing_title')
-    .setLabel('Title')
-    .setPlaceholder('e.g., Gaming PC For Sale, Web Design Services')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(100);
+  const typeMenu = new StringSelectMenuBuilder()
+    .setCustomId('marketplace_type')
+    .setPlaceholder('Physical or Digital?')
+    .addOptions([
+      { label: 'Physical Product', value: 'physical', emoji: '📦' },
+      { label: 'Digital Product/Service', value: 'digital', emoji: '💾' }
+    ]);
 
-  // Description input
-  const descriptionInput = new TextInputBuilder()
-    .setCustomId('listing_description')
-    .setLabel('Description')
-    .setPlaceholder('Provide detailed information about your listing...')
-    .setStyle(TextInputStyle.Paragraph)
-    .setRequired(true)
-    .setMaxLength(1000);
+  const conditionMenu = new StringSelectMenuBuilder()
+    .setCustomId('marketplace_condition')
+    .setPlaceholder('Condition')
+    .addOptions([
+      { label: 'New', value: 'new', emoji: '✨' },
+      { label: 'Like New', value: 'like_new', emoji: '🌟' },
+      { label: 'Used - Excellent', value: 'excellent', emoji: '👍' },
+      { label: 'Used - Good', value: 'good', emoji: '👌' },
+      { label: 'Used - Fair', value: 'fair', emoji: '🆗' },
+      { label: 'For Parts/Not Working', value: 'parts', emoji: '🔧' },
+      { label: 'N/A (Services/Digital)', value: 'na', emoji: '➖' }
+    ]);
 
-  // Price input
-  const priceInput = new TextInputBuilder()
-    .setCustomId('listing_price')
-    .setLabel('Price')
-    .setPlaceholder('e.g., $500, Free, Negotiable, 100 points')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(50);
+  const continueButton = new ButtonBuilder()
+    .setCustomId('marketplace_continue')
+    .setLabel('Continue to Form')
+    .setStyle(ButtonStyle.Success)
+    .setEmoji('📝');
 
-  // Contact input
-  const contactInput = new TextInputBuilder()
-    .setCustomId('listing_contact')
-    .setLabel('Contact Information')
-    .setPlaceholder('How should people contact you? (DM, email, etc.)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(200);
+  const categoryRow = new ActionRowBuilder().addComponents(categoryMenu);
+  const typeRow = new ActionRowBuilder().addComponents(typeMenu);
+  const conditionRow = new ActionRowBuilder().addComponents(conditionMenu);
+  const buttonRow = new ActionRowBuilder().addComponents(continueButton);
 
-  // Image URL input (optional)
-  const imageInput = new TextInputBuilder()
-    .setCustomId('listing_image')
-    .setLabel('Image URL (Optional)')
-    .setPlaceholder('https://example.com/image.png')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false)
-    .setMaxLength(500);
-
-  // Add inputs to action rows
-  const firstRow = new ActionRowBuilder().addComponents(titleInput);
-  const secondRow = new ActionRowBuilder().addComponents(descriptionInput);
-  const thirdRow = new ActionRowBuilder().addComponents(priceInput);
-  const fourthRow = new ActionRowBuilder().addComponents(contactInput);
-  const fifthRow = new ActionRowBuilder().addComponents(imageInput);
-
-  modal.addComponents(firstRow, secondRow, thirdRow, fourthRow, fifthRow);
-
-  await interaction.showModal(modal);
+  await interaction.reply({
+    content: '**Step 1 of 2:** Please select the details for your listing:',
+    components: [categoryRow, typeRow, conditionRow, buttonRow],
+    ephemeral: true
+  });
 }
 
 async function handleMarketplaceModalSubmit(interaction) {
@@ -522,43 +633,59 @@ async function handleMarketplaceModalSubmit(interaction) {
     });
   }
 
-  // Get form data
+  // Get stored dropdown selections
+  const userId = interaction.user.id;
+  const formData = marketplaceFormData.get(userId) || {};
+  
+  // Get form data from modal
   const title = interaction.fields.getTextInputValue('listing_title');
   const description = interaction.fields.getTextInputValue('listing_description');
   const price = interaction.fields.getTextInputValue('listing_price');
   const contact = interaction.fields.getTextInputValue('listing_contact');
-  const imageUrl = interaction.fields.getTextInputValue('listing_image') || null;
+  const imagesInput = interaction.fields.getTextInputValue('listing_images') || '';
 
-  // Validate image URL if provided
-  let validImageUrl = null;
-  if (imageUrl) {
-    try {
-      new URL(imageUrl);
-      validImageUrl = imageUrl;
-    } catch (e) {
-      // Invalid URL, ignore it
-    }
-  }
+  // Parse multiple image URLs (separated by newlines or commas)
+  const imageUrls = imagesInput
+    .split(/[\n,]+/)
+    .map(url => url.trim())
+    .filter(url => url.length > 0)
+    .filter(url => {
+      try {
+        new URL(url);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
 
-  // Create submission embed
+  // Create submission embed with dropdown data
   const submissionEmbed = new EmbedBuilder()
     .setColor('#FFA500')
     .setTitle('📝 New Marketplace Submission')
     .addFields(
       { name: '📌 Title', value: title, inline: false },
       { name: '📄 Description', value: description, inline: false },
+      { name: '🏷️ Category', value: formatValue(formData.category || 'Not specified'), inline: true },
+      { name: '📦 Type', value: formatValue(formData.type || 'Not specified'), inline: true },
+      { name: '✨ Condition', value: formatValue(formData.condition || 'Not specified'), inline: true },
       { name: '💰 Price', value: price, inline: true },
-      { name: '📞 Contact', value: contact, inline: true },
+      { name: '📞 Contact & Social', value: contact, inline: false },
       { name: '👤 Submitted By', value: `${interaction.user}`, inline: true }
     )
-    .setTimestamp()
-    .setFooter({ text: `User ID: ${interaction.user.id}` });
+    .setTimestamp();
 
-  if (validImageUrl) {
-    submissionEmbed.setImage(validImageUrl);
+  if (imageUrls.length > 0) {
+    submissionEmbed.setImage(imageUrls[0]); // Set first image as main image
+    if (imageUrls.length > 1) {
+      submissionEmbed.addFields({
+        name: '🖼️ Additional Images',
+        value: imageUrls.slice(1).map((url, i) => `[Image ${i + 2}](${url})`).join(' • '),
+        inline: false
+      });
+    }
   }
 
-  // Create approve/decline buttons
+  // Create approve/decline/request buttons
   const submissionId = `${Date.now()}_${interaction.user.id}`;
   const buttons = new ActionRowBuilder()
     .addComponents(
@@ -570,6 +697,63 @@ async function handleMarketplaceModalSubmit(interaction) {
       new ButtonBuilder()
         .setCustomId(`marketplace_request_images_${submissionId}`)
         .setLabel('Request Images')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📸'),
+      new ButtonBuilder()
+        .setCustomId(`marketplace_decline_${submissionId}`)
+        .setLabel('Decline')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌')
+    );
+
+  // Send to submissions channel
+  try {
+    const submissionsChannel = await client.channels.fetch(guildConfig.submissions_channel_id);
+    const submissionMessage = await submissionsChannel.send({
+      embeds: [submissionEmbed],
+      components: [buttons]
+    });
+
+    // Store submission data in footer
+    const submissionData = {
+      messageId: submissionMessage.id,
+      title,
+      description,
+      category: formData.category || 'other',
+      type: formData.type || 'physical',
+      condition: formData.condition || 'na',
+      price,
+      contact,
+      imageUrls: imageUrls,
+      userId: interaction.user.id,
+      username: interaction.user.username,
+      userTag: interaction.user.tag
+    };
+
+    // Store data as hidden field in embed (retrieve later via embed fields)
+    submissionEmbed.setFooter({ 
+      text: `User ID: ${interaction.user.id} | Data: ${Buffer.from(JSON.stringify(submissionData)).toString('base64')}`
+    });
+
+    // Edit message - clean display without JSON code block
+    await submissionMessage.edit({
+      embeds: [submissionEmbed],
+      components: [buttons]
+    });
+
+    // Clean up stored form data
+    marketplaceFormData.delete(userId);
+
+    await interaction.editReply({
+      content: '✅ Your submission has been sent for review! You will be notified once it is processed.'
+    });
+  } catch (error) {
+    console.error('Error sending submission:', error);
+    await interaction.editReply({
+      content: '❌ Failed to submit your listing. Please contact an administrator.'
+    });
+  }
+}
         .setStyle(ButtonStyle.Primary)
         .setEmoji('📸'),
       new ButtonBuilder()
@@ -662,14 +846,28 @@ async function handleMarketplaceApprove(interaction) {
       .setTitle(submissionData.title)
       .setDescription(submissionData.description)
       .addFields(
+        { name: '🏷️ Category', value: formatValue(submissionData.category), inline: true },
+        { name: '📦 Type', value: formatValue(submissionData.type), inline: true },
+        { name: '✨ Condition', value: formatValue(submissionData.condition), inline: true },
         { name: '💰 Price', value: submissionData.price, inline: true },
-        { name: '📞 Contact', value: submissionData.contact, inline: true },
+        { name: '📞 Contact', value: submissionData.contact, inline: false },
         { name: '👤 Seller', value: `<@${submissionData.userId}>`, inline: true }
       )
       .setFooter({ text: `Listed by ${submissionData.username}` })
       .setTimestamp();
 
-    if (submissionData.imageUrl) {
+    // Handle multiple images
+    if (submissionData.imageUrls && submissionData.imageUrls.length > 0) {
+      listingEmbed.setImage(submissionData.imageUrls[0]); // Main image
+      if (submissionData.imageUrls.length > 1) {
+        listingEmbed.addFields({
+          name: '🖼️ More Images',
+          value: submissionData.imageUrls.slice(1).map((url, i) => `[Image ${i + 2}](${url})`).join(' • '),
+          inline: false
+        });
+      }
+    } else if (submissionData.imageUrl) {
+      // Backwards compatibility for old single image field
       listingEmbed.setImage(submissionData.imageUrl);
     }
 
@@ -787,6 +985,9 @@ async function handleMarketplaceRequestImages(interaction) {
 
 // Store active image request listeners
 const imageRequestListeners = new Map();
+
+// Store marketplace form selections temporarily
+const marketplaceFormData = new Map();
 
 function setupImageListener(userId, submissionMessageId, listingTitle) {
   // Store the listener with expiration time (24 hours)
