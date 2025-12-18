@@ -246,9 +246,9 @@ async function handleGoodCommand(interaction) {
   }
 
   // Load points, update, and save
-  const currentPoints = getPoints(targetUser.id);
+  const currentPoints = await getPoints(targetUser.id);
   const newPoints = currentPoints + 1;
-  setPoints(targetUser.id, newPoints);
+  await setPoints(targetUser.id, newPoints);
 
   await interaction.reply({
     content: `✅ Awarded +1 point to ${targetUser}! They now have **${newPoints}** point(s).`
@@ -258,7 +258,7 @@ async function handleGoodCommand(interaction) {
 async function handleBalanceCommand(interaction) {
   const targetUser = interaction.options.getUser('user') || interaction.user;
   
-  const userPoints = getPoints(targetUser.id);
+  const userPoints = await getPoints(targetUser.id);
 
   const isOwnBalance = targetUser.id === interaction.user.id;
   const message = isOwnBalance
@@ -281,17 +281,17 @@ async function handleResetCommand(interaction) {
 
   if (targetUser) {
     // Reset specific user
-    const hadPoints = getPoints(targetUser.id);
-    resetPoints(targetUser.id);
+    const hadPoints = await getPoints(targetUser.id);
+    await resetPoints(targetUser.id);
 
     await interaction.reply({
       content: `🔄 Reset ${targetUser}'s points to 0. (Previously: ${hadPoints})`
     });
   } else {
     // Reset all users
-    const allPoints = getAllPoints();
+    const allPoints = await getAllPoints();
     const userCount = allPoints.length;
-    resetPoints();
+    await resetPoints();
 
     await interaction.reply({
       content: `🔄 Reset all points! Cleared data for ${userCount} user(s).`
@@ -300,7 +300,7 @@ async function handleResetCommand(interaction) {
 }
 
 async function handleLeaderboardCommand(interaction) {
-  const allPoints = getAllPoints();
+  const allPoints = await getAllPoints();
   
   // Take top 10
   const sortedUsers = allPoints.slice(0, 10);
@@ -378,7 +378,7 @@ async function handleMarketplaceSetup(interaction) {
   console.log('Marketplace Channel:', marketplaceChannel.id);
   console.log('Submissions Channel:', submissionsChannel.id);
   
-  setMarketplaceConfig(interaction.guildId, marketplaceChannel.id, submissionsChannel.id);
+  await setMarketplaceConfig(interaction.guildId, marketplaceChannel.id, submissionsChannel.id);
   
   console.log('✅ Config saved successfully to database');
 
@@ -398,7 +398,7 @@ async function handleMarketplacePost(interaction) {
   }
 
   // Check if marketplace is configured
-  const config = getMarketplaceConfig(interaction.guildId);
+  const config = await getMarketplaceConfig(interaction.guildId);
   if (!config) {
     return interaction.reply({
       content: '❌ Marketplace system is not configured! Use `/marketplace-setup` first.',
@@ -436,7 +436,7 @@ async function handleMarketplacePost(interaction) {
 
 async function handleMarketplaceSubmitButton(interaction) {
   // Check if marketplace is configured
-  const guildConfig = getMarketplaceConfig(interaction.guildId);
+  const guildConfig = await getMarketplaceConfig(interaction.guildId);
 
   console.log('📋 Marketplace Submit Button Clicked');
   console.log('Guild ID:', interaction.guildId);
@@ -514,7 +514,7 @@ async function handleMarketplaceSubmitButton(interaction) {
 async function handleMarketplaceModalSubmit(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const guildConfig = getMarketplaceConfig(interaction.guildId);
+  const guildConfig = await getMarketplaceConfig(interaction.guildId);
 
   if (!guildConfig) {
     return interaction.editReply({
@@ -632,7 +632,7 @@ async function handleMarketplaceApprove(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  const guildConfig = getMarketplaceConfig(interaction.guildId);
+  const guildConfig = await getMarketplaceConfig(interaction.guildId);
 
   if (!guildConfig) {
     return interaction.editReply({
@@ -846,7 +846,7 @@ client.on('messageCreate', async message => {
     await message.reply({ embeds: [confirmEmbed] });
 
     // Find the submission message and update it
-    const allConfigs = getAllMarketplaceConfigs();
+    const allConfigs = await getAllMarketplaceConfigs();
     
     for (const config of allConfigs) {
       try {
